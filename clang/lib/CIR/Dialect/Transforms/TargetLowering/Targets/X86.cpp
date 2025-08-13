@@ -189,13 +189,13 @@ void X86_64ABIInfo::classify(mlir::Type Ty, uint64_t OffsetBase, Class &Lo,
       // AMD64-ABI 3.2.3p2: Rule 1. If the size of an object is larger
       // than eight eightbytes, ..., it has class MEMORY.
       if (Size > 512)
-        cir_cconv_unreachable("NYI");
+        return;
 
       // AMD64-ABI 3.2.3p2: Rule 2. If a C++ object has either a non-trivial
       // copy constructor or a non-trivial destructor, it is passed by invisible
       // reference.
       if (getRecordArgABI(RT, getCXXABI()))
-        cir_cconv_unreachable("NYI");
+        return;
 
       // Assume variable sized types are passed in memory.
       if (cir::MissingFeatures::recordDeclHasFlexibleArrayMember())
@@ -239,7 +239,9 @@ void X86_64ABIInfo::classify(mlir::Type Ty, uint64_t OffsetBase, Class &Lo,
         // than 128.
         if (Size > 128 && ((!IsUnion && Size != getContext().getTypeSize(FT)) ||
                            Size > getNativeVectorSizeForAVXABI(AVXLevel))) {
-          cir_cconv_unreachable("NYI");
+          Lo = Class::Memory;
+          postMerge(Size, Lo, Hi);
+          return;
         }
         // Note, skip this test for bit-fields, see below.
         if (!BitField && Offset % getContext().getTypeAlign(RT)) {
@@ -258,7 +260,21 @@ void X86_64ABIInfo::classify(mlir::Type Ty, uint64_t OffsetBase, Class &Lo,
         // record to be passed in memory even if unaligned, and
         // therefore they can straddle an eightbyte.
         if (BitField) {
-          cir_cconv_unreachable("NYI");
+        assert(!i->isUnnamedBitField());
+        uint64_t Offset = OffsetBase + Layout.getFieldOffset(idx);
+        uint64_t Size = i->getBitWidthValue();
+
+        uint64_t EB_Lo = Offset / 64;
+        uint64_t EB_Hi = (Offset + Size - 1) / 64;
+
+        if (EB_Lo) {
+          assert(EB_Hi == EB_Lo && "Invalid classification, type > 16 bytes.");
+          FieldLo = Class::NoClass;
+          FieldHi = Class::Integer;
+        } else {
+          FieldLo = Class::Integer;
+          FieldHi = EB_Hi ? Class::Integer : Class::NoClass;
+        }
         } else {
           classify(FT, Offset, FieldLo, FieldHi, isNamedArg);
         }

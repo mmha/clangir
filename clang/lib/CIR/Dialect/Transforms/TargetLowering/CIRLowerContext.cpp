@@ -101,6 +101,20 @@ clang::TypeInfo CIRLowerContext::getTypeInfoImpl(const mlir::Type T) const {
       Align = Target->getPointerAlign(clang::LangAS::Default);
       break;
     }
+    if (auto arrayType = mlir::dyn_cast<ArrayType>(T)) {
+      uint64_t Size = arrayType.getSize();
+
+      clang::TypeInfo EltInfo = getTypeInfo(arrayType.getElementType());
+      assert((Size == 0 || EltInfo.Width <= (uint64_t)(-1) / Size) &&
+             "Overflow in array type bit size evaluation");
+      Width = EltInfo.Width * Size;
+      Align = EltInfo.Align;
+      AlignRequirement = EltInfo.AlignRequirement;
+      if (!getTargetInfo().getCXXABI().isMicrosoft() ||
+          getTargetInfo().getPointerWidth(clang::LangAS::Default) == 64)
+        Width = llvm::alignTo(Width, Align);
+      break;
+    }
     cir_cconv_unreachable("Unknown builtin type!");
     break;
   }
